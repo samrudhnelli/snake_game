@@ -1,25 +1,24 @@
 #include <iostream>
+#include <stdint.h>
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <unordered_map>
 #include <vector>
 
-#define GRID_SIZE 40 // Grid size
+using namespace std;
 
 #ifdef _WIN32
     #include <conio.h>
     #include <Windows.h>
-    void refresh_screen(int snake_speed)
-    {
+    inline void refresh_screen(int snake_speed) {
         Sleep(snake_speed);
         system("cls");
     }
-
-    char get_input()
-    {
+    inline char get_input() {
         return getch();
     }
 
@@ -29,299 +28,270 @@
     #include <sys/select.h>
     #include <termios.h>
     #include <sys/ioctl.h>
-
-    inline int kbhit() 
-    {
+    inline int kbhit() {
         static const int STDIN = 0;
         static bool initialized = false;
-
         if (! initialized) {
-            // Use termios to turn off line buffering
-            termios term;
+            termios term;       // Use termios to turn off line buffering
             tcgetattr(STDIN, &term);
             term.c_lflag &= ~ICANON;
             tcsetattr(STDIN, TCSANOW, &term);
             setbuf(stdin, NULL);
             initialized = true;
         }
-
         int bytesWaiting;
         ioctl(STDIN, FIONREAD, &bytesWaiting);
         return bytesWaiting;
     }
-
-    void refresh_screen(int snake_speed)
-    {
+    inline void refresh_screen(int snake_speed) {
         usleep(snake_speed * 1000);
         system("clear");
     }
-
-    char get_input()
-    {
+    inline char get_input() {
         return getchar();
     }
 
 #else
     #error "Unknown OS used!!"
-
 #endif
 
+struct Node {
+    int x, y;
+    Node *next, *prev;
+    Node(int x, int y, Node *next, Node *prev) {
+        this->x = x;
+        this->y = y;
+        this->next = next;
+        this->prev = prev;
+    }
+};
 
-class game
-{
+inline uint64_t pack(int32_t x, int32_t y) {
+    return ((uint64_t)(uint32_t)x << 32) | (uint32_t)y;
+}
+
+class game {
     public:
-    int f_x, f_y;
-    int head_x = 20, head_y = 20, snake_length = 3, snake_dir = 1, snake_speed = 300; // 1->right, -1->left, 2->up, -2->down
-    std::vector<int> snake_x, snake_y;
-    char A[GRID_SIZE][GRID_SIZE];
-    void fruit();
+    int f_x, f_y, size_x = 35, size_y = 100;
+    int snake_length = 3, snake_speed = 300;
+    char last_char;
+    bool fruit_eaten = false;
+    unordered_map<uint64_t, char> snake_pos;
+    Node *root, *tail;
     void init();
-    int snake(int,int,int,int);
+    void fruit();
+    bool snake(char);
     int snake_game();
 };
 
-
-void game::fruit()
-{
-    // snake_x.resize(this->snake_length);
-    // snake_y.resize(this->snake_length);
-    bool fruit_exists = false;
-    while(!fruit_exists)
-    {
+inline void game::fruit() {
+    while(1) {
         srand(time(NULL));
-        int x = rand() % 40;
-        int y = rand() % 40;
-        int token = 1;
-        for(int i = 0; i < this->snake_length; i++)
-        {
-            if(x == snake_x[i] || y == snake_y[i])
-            {
-                token = 0;
-                break;
-            }
+        int x = rand() % size_x;
+        int y = rand() % size_y;
+        uint64_t xy = pack(x, y);
+        for(auto it : snake_pos) {
+            if(xy == it.first)
+                continue;
         }
-        if(x == 0 || x == GRID_SIZE-1 || y == 0 || y == GRID_SIZE-1)
-            token = 0;
-        if(token)
-        {
-            A[x][y] = '@';
-            f_x = x;
-            f_y = y;
-            fruit_exists = true;
-        }
+        if(x == 0 || x == size_x-1 || y == 0 || y == size_y-1)
+            continue;
+        f_x = x;
+        f_y = y;
+        break;
     }
 }
 
-void game::init()
-{
-    snake_x.resize(this->snake_length);
-    snake_y.resize(this->snake_length);
-    for(int i = 0; i < snake_length; i++)
-    {
-        snake_x[i] = head_x;
-        snake_x[i] = head_x;
-        snake_y[i] = head_y - i;
-        if(!i)
-            A[snake_x[i]][snake_y[i]] = '>';
-        else
-            A[snake_x[i]][snake_y[i]] = '-';
+inline void game::init() {
+    srand(time(NULL));
+    int x = rand() % 4, head_x = size_x / 2, head_y = size_y / 2;
+    char c = vector<char>({'>', '<', '^', 'v'})[x];
+    char d = vector<char>({'-', '-', '|', '|'})[x];
+    last_char = vector<char>({'d', 'a', 'w', 's'})[x];
+    root = new Node(head_x, head_y, NULL, NULL);
+    cout << head_x << " " << head_y;
+    snake_pos[pack(head_x, head_y)] = c;
+    Node *head = root;
+    for(int i = 1; i < snake_length; i++) {
+        switch(x) {
+            case 0: head_y--; break;
+            case 1: head_y++; break;
+            case 2: head_x++; break;
+            case 3: head_x--; break;
+        }
+        Node *node = new Node(head_x, head_y, NULL, head);
+        snake_pos[pack(head_x, head_y)] = d;
+        head->next = node;
+        head = node;
     }
+    tail = head;
     this->fruit();
 }
 
-
-int game::snake(int w, int a, int s, int d)
-{
-
-    if(w)
-        snake_dir = 2;
-    if(a)
-        snake_dir = -1;
-    if(s)
-        snake_dir = -2;
-    if(d)
-        snake_dir = 1;
-
-    int tx = snake_x[snake_length-1], ty = snake_y[snake_length-1];
-    
-    char t = A[tx][ty];
-    
-    for(int i = snake_length-1; i > 0; i--)
-    {
-        snake_x[i] = snake_x[i-1];
-        snake_y[i] = snake_y[i-1];
+inline bool game::snake(char ch) {
+    if(!fruit_eaten) {
+        Node *ptr = tail;
+        snake_pos.erase(pack(tail->x, tail->y));
+        tail = tail->prev;
+        tail->next = NULL;
+        delete ptr;
     }
-    A[tx][ty] = ' ';
-
-    if(snake_dir == 1)
-    {
-        snake_y[0]++;
-        A[snake_x[0]][snake_y[0]] = '>';
-        A[snake_x[1]][snake_y[1]] = '-';
+    fruit_eaten = false;
+    if(ch == 'l')
+        ch = last_char;
+    if(ch == 'd') {
+        Node *node = new Node(root->x, root->y + 1, root, NULL);
+        snake_pos[pack(node->x, node->y)] = '>';
+        snake_pos[pack(root->x, root->y)] = '-';
+        root->prev = node;
+        root = node;
     }
-    if(snake_dir == -1)
-    {
-        snake_y[0]--;
-        A[snake_x[0]][snake_y[0]] = '<';
-        A[snake_x[1]][snake_y[1]] = '-';
+    if(ch == 'a') {
+        Node *node = new Node(root->x, root->y - 1, root, NULL);
+        snake_pos[pack(node->x, node->y)] = '<';
+        snake_pos[pack(root->x, root->y)] = '-';
+        root->prev = node;
+        root = node;
     }
-    if(snake_dir == 2)
-    {
-        snake_x[0]--;
-        A[snake_x[0]][snake_y[0]] = '^';
-        A[snake_x[1]][snake_y[1]] = '|';
+    if(ch == 'w') {
+        Node *node = new Node(root->x - 1, root->y, root, NULL);
+        snake_pos[pack(node->x, node->y)] = '^';
+        snake_pos[pack(root->x, root->y)] = '|';
+        root->prev = node;
+        root = node;
     }
-    if(snake_dir == -2)
-    {
-        snake_x[0]++;
-        A[snake_x[0]][snake_y[0]] = 'v';
-        A[snake_x[1]][snake_y[1]] = '|';
+    if(ch == 's') {
+        Node *node = new Node(root->x + 1, root->y, root, NULL);
+        snake_pos[pack(node->x, node->y)] = 'v';
+        snake_pos[pack(root->x, root->y)] = '|';
+        root->prev = node;
+        root = node;
     }
-    if(snake_x[0] == f_x && snake_y[0] == f_y)
-    {
+    last_char = ch;
+    if(root->x == f_x && root->y == f_y) {
         this->fruit();
-        snake_length ++;
-        snake_x.push_back(tx);
-        snake_y.push_back(ty);
-        A[tx][ty] = t;
+        snake_length++;
+        fruit_eaten = true;
     }
-    for(int i = 1; i < snake_length; i++)
-    {
-        if(snake_x[0] == snake_x[i] && snake_y[0] == snake_y[i])
-        {
-            return 0;
+    if(root->x == 0 || root->x == size_x-1 || root->y == 0 || root->y == size_y-1) {
+        return false;
+    }
+    Node *head = root->next;
+    while(head != NULL) {
+        if(head->x == root->x && head->y == root->y) {
+            cout << "shit" << root->x << " " << root->y << " " << snake_pos[pack(head->x, head->y)] << endl;
+            return false;
         }
+        head = head->next;
     }
-    if(snake_x[0] == 0 || snake_x[0] == GRID_SIZE-1 || snake_y[0] == 0 || snake_y[0] == GRID_SIZE-1)
-    {
-        return 0;
-    }
-    return 1;
-    
+    return true;   
 }
 
-int game::snake_game()
-{
+inline int game::snake_game() {
     FILE *fptr;
     fptr = fopen("snake_game_leaderboard.txt","a+");
     fseek(fptr, 0, SEEK_SET);
-
     int c = fgetc(fptr);
-    if (c == EOF) 
-    {
+    if (c == EOF)
         fprintf(fptr,"Highscore none 0\n");
-    }
     else
-    {
         ungetc(c, fptr);
-    }
     fseek(fptr,0,SEEK_SET);
-
     int highscore, score;
     char user[100], tuser[100];
     fscanf(fptr,"%*s %s %d",user,&highscore);
     fseek(fptr,0,SEEK_SET);
-
-
-    int cont = 1;
-    for(int i = 0; i < GRID_SIZE; i++)
-    for(int j = 0; j < GRID_SIZE; j++)
-    {
-    if(i == 0 || i == GRID_SIZE-1)
-        A[i][j] = '*';
-    else if(j == 0 || j == GRID_SIZE-1)
-        A[i][j] = '*';
-    else
-        A[i][j] = ' ';
-    }
+    bool flag = true;
     this->init();
-    while(cont)
-    {
-        while(!kbhit() && cont)
-        {
-            for(int i = 0; i < GRID_SIZE; i++)
-            {
-                for(int j = 0; j < GRID_SIZE; j++)
-                {
-                    if(j == 0)
-                        printf("                                                      ");
-                    printf("%c",A[i][j]);
+    while(flag) {
+        while(!kbhit() && flag) {
+            for(int i = 0; i < size_x; i++) {
+                for(int j = 0; j < size_y; j++) {
+                    if(i == 0 || i == size_x - 1 || j == 0 || j == size_y - 1)
+                        printf("*");
+                    else if(i == f_x && j == f_y)
+                        printf("@");
+                    else if(auto it = snake_pos.find(pack(i, j)); it != snake_pos.end())
+                        printf("%c", it->second);
+                    else
+                        printf(" ");
                 }
                 if(i == 16)
-                    printf("                                  Current Score :    ");
+                    printf("              Current Score :    ");
                 else if(i == 17)
-                    printf("                                        %d", snake_length - 3);
+                    printf("                    %d", snake_length - 3);
                 else if(i == 25)
-                    printf("                                     !!Help!! :      ");
+                    printf("                 !!Help!! :      ");
                 else if(i == 26)
-                    printf("                           1) Move UP : w / W / ^ arrow");
+                    printf("       1) Move UP : w / W / ^ arrow");
                 else if(i == 27)
-                    printf("                           2) Move Left : a / A / v arrow ");
+                    printf("       2) Move Left : a / A / v arrow ");
                 else if(i == 28)
-                    printf("                           3) Move Down : s / S / < arrow ");
+                    printf("       3) Move Down : s / S / < arrow ");
                 else if(i == 29)
-                    printf("                           4) Move Right : d / D / > arrow ");
+                    printf("       4) Move Right : d / D / > arrow ");
                 else if(i == 30)
-                    printf("                           5) Increase snake speed : f ");
+                    printf("       5) Increase snake speed : f ");
                 else if(i == 31)
-                    printf("                           6) Decrease snake speed : g ");
+                    printf("       6) Decrease snake speed : g ");
                 else if(i == 32)
-                    printf("                           7) Quit : q / Enter ");
-                
+                    printf("       7) Quit : q / Q");
+                else if(i == 33)
+                    printf("       8) Change GRID_SIZE(%ix%i) : x ", size_x, size_y);
                 printf("\n");
             }
-            printf("                                                           Last Highscore: %d by %s \n",highscore,user);
-            cont = this->snake(0,0,0,0);
+            printf("                                       Last Highscore: %d by %s \n",highscore,user);
+            flag = this->snake('l');
             refresh_screen(snake_speed);
         }
-        if(cont)
-        {
+        if(flag) {
             char ch = get_input();
             int k = 0;
-            if(ch == 27)
-            {
+            if(ch == 27) {
                 scanf("%c", &ch);
                 k++;
             }
-            if(k && ch == 91)
-            {
+            if(k && ch == 91) {
                 scanf("%c", &ch);
                 k++;
             }
-            if(k == 2)
-            {
+            if(k == 2) {
                 if(ch == 65)
-                    cont = this->snake(1,0,0,0);
+                    flag = this->snake('w');
                 else if(ch == 68)
-                    cont = this->snake(0,1,0,0);
+                    flag = this->snake('a');
                 else if(ch == 66)
-                    cont = this->snake(0,0,1,0);
+                    flag = this->snake('s');
                 else if(ch == 67)
-                    cont = this->snake(0,0,0,1);
+                    flag = this->snake('d');
             }
-            else
-            {
+            else {
                 if(ch == 'w' || ch == 'W')
-                    cont = this->snake(1,0,0,0);
+                    flag = this->snake('w');
                 if(ch == 'a' || ch == 'A')
-                    cont = this->snake(0,1,0,0);
+                    flag = this->snake('a');
                 if(ch == 's' || ch == 'S')
-                    cont = this->snake(0,0,1,0);
+                    flag = this->snake('s');
                 if(ch == 'd' || ch == 'D')
-                    cont = this->snake(0,0,0,1);
+                    flag = this->snake('d');
                 if(ch == 'f')
                     snake_speed /= 2;
                 if(ch == 'g')
                     snake_speed *= 2;
-                if(ch == 'q' || (int)ch == 13)
-                    cont = 0;
+                if(ch == 'x') {
+                    printf("Warning: Large sizes can distort and break the grid!!\n");
+                    printf("Enter new GRID_SIZE in the format AxB (Ex: 40x40)\n");
+                    int copy_x = size_x, copy_y = size_y;
+                    scanf("%ix%i", &size_x, &size_y);
+                    if(copy_x > size_x || copy_y > size_y)
+                        fruit();
+                }
+                if(ch == 'q' || ch == 'Q')
+                    flag = false;
             }
         }
-        
     }
-
     score = snake_length - 3;
-
     printf("                                                      ****************************************\n");
     printf("                                                      *                                      *\n");
     printf("                                                      *                                      *\n");
@@ -348,8 +318,8 @@ int game::snake_game()
     printf("                                                      *                                      *\n");
     printf("                                                      *                                      *\n");
     printf("                                                      *                                      *\n");
-    printf("                                                      *          Your Score :                *\n");
-    printf("                                                      *%16d                      *\n",score);
+    printf("                                                      *              Your Score :            *\n");
+    printf("                                                      *%20d                  *\n",score);
     printf("                                                      *                                      *\n");
     printf("                                                      *                                      *\n");
     printf("                                                      *                                      *\n");
@@ -363,63 +333,48 @@ int game::snake_game()
     printf("                                                      *                                      *\n");
     printf("                                                      ****************************************\n");
     printf("                                                      ****************************************\n");
-
     char d = 'y';
-
-    if(score > highscore)
-    {
+    if(score > highscore) {
         printf("\n                                                      Congratulations on beating the highscore!!\n");
-        printf("                                                      Your name please : ");
+        printf("                                                             Your name : ");
         scanf("%s",tuser);
-        printf("                                                      Thank You for enjoying the game!!\n");
-        
+        printf("                                                      Thank You for playing the game!!\n");
         int line_count = 0;
-
         FILE *tfp = fopen("temp.txt","w");
         fprintf(tfp,"Highscore %s %d",tuser,score);
-
-        while(d != EOF)
-        {
+        while(d != EOF) {
             d = getc(fptr);
-            if(line_count != 0)
-            {
+            if(line_count != 0) {
                 if(d != '\n')
                     fprintf(tfp,"%c",d);
             }
-            if(d == '\n')
-            {
+            if(d == '\n') {
                 fprintf(tfp,"%c",d);
                 line_count++;
             }
-
         }
-        
         fprintf(tfp,"%s %d\n",tuser,score);
         fclose(fptr);
         fclose(tfp);
         remove("snake_game_leaderboard.txt");
         rename("temp.txt","snake_game_leaderboard.txt");
     }
-    else
-    {
+    else {
         printf("\n                                                      Would you like to save your result ? (y/N) : ");
         scanf("%c",&d);
-        if(d == 'y')
-        {
+        if(d == 'y') {
             printf("\n                                                      Enter the player name : ");
             scanf("%s",tuser);
             printf("\n                                                      Saved successfully !!");
+            fseek(fptr,0,SEEK_END);
+            fprintf(fptr,"%s %d\n",tuser,score);
         }
         printf("\n                                                      Thanks for playing the game!!\n");
-        fseek(fptr,0,SEEK_END);
-        fprintf(fptr,"%s %d\n",tuser,score);
     }
-
     char e;
     printf("\n                                                      Would you like to play again? (y/N) : ");
-    scanf(" %c",&e);
+    e = getchar();
     if(e == 'y' || e == 'Y')
         return 1;
     return 0;
 }
-
